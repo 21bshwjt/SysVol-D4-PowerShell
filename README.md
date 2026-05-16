@@ -1,313 +1,465 @@
-<h2 align="center">
-  <img width="55" src="https://github.com/21bshwjt/SysVol-D4-PowerShell/blob/bf9cb4a2ecc57a5f5b4b0a411ddcc0ab53f3e607/Screenshots/dfsr.png?raw=true">
-  <span style="color: #3368FF;">Force DFSR Sysvol Replication using PowerShell</span>
-  <img width="55" src="https://github.com/21bshwjt/SysVol-D4-PowerShell/blob/bf9cb4a2ecc57a5f5b4b0a411ddcc0ab53f3e607/Screenshots/dfsr.png?raw=true">
-</h2>
+<div align="center">
 
-___________________________________________________________________________________________________________________
+<img width="80" src="https://github.com/21bshwjt/SysVol-D4-PowerShell/blob/bf9cb4a2ecc57a5f5b4b0a411ddcc0ab53f3e607/Screenshots/dfsr.png?raw=true">
 
+# Force DFSR SysVol Replication via PowerShell
 
-### 👉 D4/D2 Manual Process Has Been Mentioned Here -> Microsoft [KB](https://learn.microsoft.com/en-us/troubleshoot/windows-server/group-policy/force-authoritative-non-authoritative-synchronization)
-___________________________________________________________________________________________________________________
+*Automate the D4/D2 SysVol replication recovery process across all Domain Controllers — no manual ADSIEDIT required.*
 
-### Use-Cases
+[![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?style=for-the-badge&logo=powershell&logoColor=white)](https://learn.microsoft.com/en-us/powershell/)
+[![Active Directory](https://img.shields.io/badge/Active%20Directory-Required-0078D4?style=for-the-badge&logo=microsoft&logoColor=white)](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/virtual-dc/active-directory-domain-services-overview)
+[![Windows Server](https://img.shields.io/badge/Windows%20Server-2016%2B-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/en-us/windows-server)
+[![License](https://img.shields.io/badge/License-MIT-brightgreen?style=for-the-badge)](LICENSE)
+
+---
+
+📖 **Official Microsoft KB** → [Force Authoritative & Non-Authoritative Synchronization for DFSR-Replicated Sysvol](https://learn.microsoft.com/en-us/troubleshoot/windows-server/group-policy/force-authoritative-non-authoritative-synchronization)
+
+</div>
+
+---
+
+## 📋 Table of Contents
+
+| # | Step | Description |
+|---|---|---|
+| 1 | [Stop DFSR Service](#-step-1--stop-dfsr-service-on-all-dcs) | Set startup to Manual & stop on all DCs |
+| 2 | [Verify Service Status](#-step-2--verify-dfsr-service-status) | Confirm service is stopped across all DCs |
+| 3 | [Manual ADSIEDIT Reference](#-step-3--manual-adsiedit-reference) | Reference for manual attribute changes |
+| 4 | [Set PDC as Authoritative](#-step-4--set-pdc-as-authoritative-automated) | Automate ADSIEDIT changes on PDC |
+| 5 | [Set All Other DCs](#-step-5--set-msdfsrenabled--false-on-all-other-dcs) | Set `msDFSR-Enabled=FALSE` on non-PDC DCs |
+| 6 | [Force AD Replication](#-step-6--force-ad-replication) | Sync changes across the domain |
+| 7 | [Start DFSR on PDC](#-step-7--start-dfsr-on-pdc) | Bring up replication on the authoritative DC |
+| 8 | [Event ID 4114](#-step-8--event-id-4114) | Verify sysvol is no longer replicating |
+| 9 | [Re-enable PDC](#-step-9--set-msdfsrenabled--true-on-pdc) | Set `msDFSR-Enabled=TRUE` on PDC |
+| 10 | [Force AD Replication Again](#-step-10--force-ad-replication-again) | Push updated attributes across domain |
+| 11 | [DFSRDIAG on PDC](#-step-11--run-dfsrdiag-pollad-on-pdc) | Trigger DFSR poll on authoritative DC |
+| 12 | [Event ID 4602](#-step-12--event-id-4602) | Confirm D4 initialization complete |
+| 13 | [Start DFSR on Other DCs](#-step-13--start-dfsr-on-all-non-authoritative-dcs) | Bring up replication on all remaining DCs |
+| 14 | [Re-enable All Other DCs](#-step-14--set-msdfsrenabled--true-on-all-other-dcs) | Set `msDFSR-Enabled=TRUE` on non-PDC DCs |
+| 15 | [DFSRDIAG on Non-Auth DCs](#-step-15--run-dfsrdiag-pollad-on-all-non-auth-dcs) | Trigger DFSR poll on all non-authoritative DCs |
+| 16 | [Restore Service to Automatic](#-step-16--restore-dfsr-startup-type-to-automatic) | Return DFSR to automatic startup on all DCs |
+| 17 | [Verify Final Status](#-step-17--verify-final-dfsr-service-status) | Confirm all DCs are healthy |
+| 18 | [SysVol Health Check](#-step-18--sysvol-health-check-post-validation) | Validate SysVol state = 4 (Normal) on all DCs |
+| 19 | [Verify ADSIEDIT Attributes](#-step-19--verify-adsiedit-attribute-values-optional) | Confirm `msDFSR-options` reset to 0 |
+
+---
+
+## ⚠️ Use Cases
+
 ```diff
-- 1. Missing SysVol/Netlogon folders on Domain Controller/s.
-- 2. GPO Inconsistencies across the Domain Controller/s.
+- 1. Missing SysVol / Netlogon folders on one or more Domain Controllers
+- 2. GPO inconsistencies across Domain Controllers in the domain
 ```
-___________________________________________________________________________________________________________________
 
-### Instructions & prerequisites
-- 👉 𝘊𝘭𝘰𝘯𝘦 𝘵𝘩𝘦 𝘙𝘦𝘱𝘰 : 𝘨𝘪𝘵 𝘤𝘭𝘰𝘯𝘦 [𝘩𝘵𝘵𝘱𝘴://𝘨𝘪𝘵𝘩𝘶𝘣.𝘤𝘰𝘮/21𝘣𝘴𝘩𝘸𝘫𝘵/𝘚𝘺𝘴𝘝𝘰𝘭-𝘋4-𝘗𝘰𝘸𝘦𝘳𝘚𝘩𝘦𝘭𝘭.𝘨𝘪𝘵](https://github.com/21bshwjt/SysVol-D4-PowerShell.git) <br/>
-- 👉 𝘊𝘰𝘱𝘺 𝘚𝘤𝘳𝘪𝘱𝘵𝘴 𝘧𝘰𝘭𝘥𝘦𝘳 𝘪𝘯𝘵𝘰 𝘵𝘩𝘦 𝘗𝘋𝘊 <br/>
-- 👉 𝘋𝘰𝘮𝘢𝘪𝘯 𝘈𝘥𝘮𝘪𝘯𝘴 𝘗𝘳𝘪𝘷𝘪𝘭𝘦𝘨𝘦𝘴 <br/>
-- 👉 𝘙𝘦𝘲𝘶𝘪𝘳𝘦𝘴 𝘈𝘤𝘵𝘪𝘷𝘦 𝘋𝘪𝘳𝘦𝘤𝘵𝘰𝘳𝘺 𝘔𝘰𝘥𝘶𝘭𝘦 <br/>
-- 👉 𝘙𝘶𝘯 𝘵𝘩𝘰𝘴𝘦 𝘚𝘤𝘳𝘪𝘱𝘵𝘴 𝘪𝘯 𝘴𝘦𝘲𝘶𝘦𝘯𝘤𝘦 <br/>
-- 👉 𝘚𝘤𝘳𝘪𝘱𝘵 𝘯𝘶𝘮𝘣𝘦𝘳𝘪𝘯𝘨 𝘩𝘢𝘷𝘦 𝘣𝘦𝘦𝘯 𝘥𝘰𝘯𝘦 𝘣𝘢𝘴𝘦𝘥 𝘰𝘯 𝘳𝘦𝘢𝘥𝘮𝘦 𝘧𝘪𝘭𝘦 𝘯𝘶𝘮𝘣𝘦𝘳𝘪𝘯𝘨 𝘩𝘦𝘯𝘤𝘦 3, 8 & 12 𝘢𝘳𝘦 𝘯𝘰𝘵 𝘵𝘩𝘦𝘳𝘦 <br/>
-- 👉 𝘚𝘤𝘳𝘪𝘱𝘵𝘴 18 𝘢𝘯𝘥 19 𝘢𝘳𝘦 𝘧𝘰𝘳 𝘱𝘰𝘴𝘵-𝘷𝘢𝘭𝘪𝘥𝘢𝘵𝘪𝘰𝘯𝘴 <br/>
-- 👉 𝘙𝘦𝘢𝘥 𝘵𝘩𝘦 𝘢𝘣𝘰𝘷𝘦 𝘮𝘦𝘯𝘵𝘪𝘰𝘯𝘦𝘥 𝘔𝘚𝘍𝘛 𝘒𝘉 <br/>
-___________________________________________________________________________________________________________________
+---
 
-#### 🌀 1. Set the DFS Replication service Startup Type to Manual and stop the service on all domain controllers in the domain. 
+## ✅ Prerequisites
+
+> Run all scripts **in sequence** from the **PDC Emulator** with an elevated PowerShell session.
+
+| Requirement | Detail |
+|---|---|
+| 🖥️ Run Location | PDC Emulator |
+| 🔑 Permissions | Domain Admins |
+| 📦 Module | Active Directory PowerShell Module |
+| 📂 Setup | Copy the `Scripts` folder to the PDC |
+| 🔢 Script Order | Run in sequence — scripts 3, 8 & 12 are intentionally absent (manual/event steps) |
+| ✔️ Post-Validation | Scripts 18 and 19 are for post-validation only |
+
+---
+
+## 🔵 Step 1 — Stop DFSR Service on All DCs
+
+> Set the DFS Replication service startup type to **Manual** and stop it on **all domain controllers**.
+
 ```powershell
-$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name 
+$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name
 
-# Change Service startup type to manual & stop the DFSR Service
-$DCs | ForEach-Object -Process { 
+$DCs | ForEach-Object -Process {
     try {
-        # Action that will run in parallel. Reference the current object via $PSItem and bring in outside variables with $USING:varname
-        Invoke-Command -ComputerName $PSItem -ScriptBlock { 
+        Invoke-Command -ComputerName $PSItem -ScriptBlock {
             Set-Service -Name 'DFSR' -StartupType Manual -Verbose
-            Stop-Service -Name 'DFS Replication' -Force -Verbose 
+            Stop-Service -Name 'DFS Replication' -Force -Verbose
         } -ErrorAction Stop
     } catch {
-        Write-Error "Failed to modify DFSR service on $PSItem Error: $_"
+        Write-Error "Failed to modify DFSR service on $PSItem | Error: $_"
     }
 }
 ```
 
-#### 🌀 2. Verify DFSR Service Status from all Domain Controllers
+---
+
+## 🔵 Step 2 — Verify DFSR Service Status
+
+> Confirm the service is **stopped** and set to **Manual** on all DCs before proceeding.
+
 ```powershell
-# Get the DFSR Service Status
-$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name 
-$GetoBj = Foreach ($DC in $DCs) { 
-    Invoke-Command -ComputerName $DC { 
-        [PSCustomObject]@{ 
-            DomainController = ($env:COMPUTERNAME).ToUpper() 
-            ServiceName      = (Get-Service -Name DFSR).Name 
-            Status           = (Get-Service -Name DFSR).Status 
-            StartType        = (Get-Service -Name DFSR).StartType 
-        }  
-    }  
-}  
-$GetoBj | Select-Object -Property DomainController, ServiceName, Status, StartType 
+$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name
+
+$GetoBj = Foreach ($DC in $DCs) {
+    Invoke-Command -ComputerName $DC {
+        [PSCustomObject]@{
+            DomainController = ($env:COMPUTERNAME).ToUpper()
+            ServiceName      = (Get-Service -Name DFSR).Name
+            Status           = (Get-Service -Name DFSR).Status
+            StartType        = (Get-Service -Name DFSR).StartType
+        }
+    }
+}
+$GetoBj | Select-Object -Property DomainController, ServiceName, Status, StartType
 ```
 
-#### 🌀 3. In the ADSIEDIT.MSC tool, modify the following DN and two attributes on the domain controller you want to make authoritative (preferably the PDC Emulator, which is usually the most up-to-date for sysvol replication contents) - Manual
-```powershell
-CN=SYSVOL Subscription,CN=Domain System Volume,CN=DFSR-LocalSettings,CN=<the server name>,OU=Domain Controllers,DC=<domain>
+---
 
-msDFSR-Enabled=FALSE
-msDFSR-options=1
-```
+## 🟡 Step 3 — Manual ADSIEDIT Reference
 
-#### 🌀 4. Modify that using PowerShell - Automated
-```powershell
-# Change PDC on ADSIEDIT 
-# Get the PDC Emulator for the domain 
-$PDCNameFull = (Get-ADDomain).PDCEmulator 
- 
-# Split the full server name to get only the server name part 
-$PDCName = $PDCNameFull -split '\.' | Select-Object -First 1 
- 
-$domain = (Get-ADDomain).DistinguishedName 
- 
-# Construct the DN (Distinguished Name) 
-$dn = "CN=SYSVOL Subscription,CN=Domain System Volume,CN=DFSR-LocalSettings,CN=$PDCName,OU=Domain Controllers,$domain" 
- 
-# Set the attributes 
-Set-ADObject -Identity $dn -Replace @{ 
-    "msDFSR-Enabled" = $False 
-    "msDFSR-options" = 1 
-} -Verbose 
+> ℹ️ This step is handled **automatically in Step 4**. Shown here for reference only.
+
+In `ADSIEDIT.MSC`, modify the following DN on the **PDC Emulator**:
+
 ```
-#### 🌀 5. Modify the following DN and single attribute on all other domain controllers in that domain
-```powershell
-$domain = (Get-ADDomain).DistinguishedName 
- 
-$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name  
- 
-foreach ($DC in $DCs) { 
- 
-    # Construct the DN (Distinguished Name) 
-    $dn = "CN=SYSVOL Subscription,CN=Domain System Volume,CN=DFSR-LocalSettings,CN=$DC,OU=Domain Controllers,$domain" 
- 
-    # Set the attributes 
-    Set-ADObject -Identity $dn -Replace @{ 
-        "msDFSR-Enabled" = $False 
-    } -Verbose 
-} 
-```
-#### 🌀 6. Force Active Directory replication throughout the domain and validate its success on all DCs.
-```powershell
-repadmin /syncall /A /e /P /d /q
+CN=SYSVOL Subscription,CN=Domain System Volume,CN=DFSR-LocalSettings,CN=<ServerName>,OU=Domain Controllers,DC=<domain>
 ```
 
-#### 🌀 7. Start the DFSR service on the PDC
+| Attribute | Value |
+|---|---|
+| `msDFSR-Enabled` | `FALSE` |
+| `msDFSR-options` | `1` |
+
+---
+
+## 🔵 Step 4 — Set PDC as Authoritative *(Automated)*
+
+> Automatically apply the ADSIEDIT changes to the **PDC Emulator** via PowerShell.
+
 ```powershell
-# Get the PDC Emulator for the domain 
-$PDCNameFull = (Get-ADDomain).PDCEmulator 
- 
-# Split the full server name to get only the server name part 
-$PDCName = $PDCNameFull -split '\.' | Select-Object -First 1 
-Invoke-Command -ComputerName $PDCName  {Start-Service -Name 'DFS Replication' -Verbose} 
+$PDCNameFull = (Get-ADDomain).PDCEmulator
+$PDCName     = $PDCNameFull -split '\.' | Select-Object -First 1
+$domain      = (Get-ADDomain).DistinguishedName
+$dn          = "CN=SYSVOL Subscription,CN=Domain System Volume,CN=DFSR-LocalSettings,CN=$PDCName,OU=Domain Controllers,$domain"
+
+Set-ADObject -Identity $dn -Replace @{
+    "msDFSR-Enabled" = $False
+    "msDFSR-options" = 1
+} -Verbose
 ```
 
-#### 🌀 8. You'll see Event ID 4114 in the DFSR event log indicating sysvol replication is no longer being replicated. 
+---
 
-#### 🌀 9. Set msDFSR-Enabled=TRUE on PDC
-```powershell
-# Change PDC on ADSIEDIT 
-# Get the PDC Emulator for the domain 
-$PDCNameFull = (Get-ADDomain).PDCEmulator 
- 
-# Split the full server name to get only the server name part 
-$PDCName = $PDCNameFull -split '\.' | Select-Object -First 1 
- 
-$domain = (Get-ADDomain).DistinguishedName 
- 
-# Construct the DN (Distinguished Name) 
-$dn = "CN=SYSVOL Subscription,CN=Domain System Volume,CN=DFSR-LocalSettings,CN=$PDCName,OU=Domain Controllers,$domain" 
- 
-# Set the attributes 
-Set-ADObject -Identity $dn -Replace @{ 
-    "msDFSR-Enabled" = $True 
-} -Verbose 
-```
-#### 🌀 10. Force Active Directory replication throughout the domain and validate its success on all DCs. 
-```powershell
-repadmin /syncall /A /e /P /d /q
-```
-#### 🌀 11. Run the following command from an elevated command prompt on the same server that you set as authoritative:
-```powershell
-DFSRDIAG POLLAD 
-```
-#### 🌀 12. You'll see Event ID 4602 in the DFSR event log indicating sysvol replication has been initialized. That domain controller has now done a D4 of sysvol replication. 
+## 🔵 Step 5 — Set `msDFSR-Enabled = FALSE` on All Other DCs
 
-#### 🌀 13. Start the DFSR service on the other non-authoritative DCs. You'll see Event ID 4114 in the DFSR event log indicating sysvol replication is no longer being replicated on each of them 
-```powershell
-$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name 
-# Start the DRSR Service  
+> Disable DFSR replication on **all non-PDC domain controllers**.
 
-$DCs | Foreach-Object -Process { 
-    #Action that will run in Parallel. Reference the current object via $PSItem and bring in outside variables with $USING:varname 
-    Invoke-Command -ComputerName $PSItem { Start-Service -Name 'DFS Replication' -Verbose 
-    } 
-} 
-```
-
-#### 🌀 14. Modify the following DN and single attribute on all other domain controllers in that domain:
 ```powershell
-$domain = (Get-ADDomain).DistinguishedName  
-$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name  
- 
-foreach ($DC in $DCs) {  
- 
-    $dn = "CN=SYSVOL Subscription,CN=Domain System Volume,CN=DFSR-LocalSettings,CN=$DC,OU=Domain Controllers,$domain"  
-    Set-ADObject -Identity $dn -Replace @{  
-        "msDFSR-Enabled" = $True 
- 
-    } -Verbose  
+$domain = (Get-ADDomain).DistinguishedName
+$DCs    = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name
+
+foreach ($DC in $DCs) {
+    $dn = "CN=SYSVOL Subscription,CN=Domain System Volume,CN=DFSR-LocalSettings,CN=$DC,OU=Domain Controllers,$domain"
+    Set-ADObject -Identity $dn -Replace @{
+        "msDFSR-Enabled" = $False
+    } -Verbose
 }
 ```
-#### 🌀 15. Run the following command from an elevated command prompt on all non-authoritative DCs (that is, all but the formerly authoritative one): 
+
+---
+
+## 🔵 Step 6 — Force AD Replication
+
+> Push all attribute changes across the entire domain and validate replication success.
+
 ```powershell
-# Get members of the "Domain Controllers" group and store their names in $servers array
-$servers = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name
+repadmin /syncall /A /e /P /d /q
+```
 
-# Get the PDC Emulator for the domain 
-$PDCNameFull = (Get-ADDomain).PDCEmulator 
- 
-# Split the full server name to get only the server name part 
-$PDCName = $PDCNameFull -split '\.' | Select-Object -First 1 
+---
 
-# Remove PDC from the $servers array
-$servers = $servers | Where-Object { $_ -ne "$PDCName" }
+## 🔵 Step 7 — Start DFSR on PDC
 
-# Run DFSRDIAG POLLAD to all Non Auth DCs
+> Start the DFS Replication service **only on the PDC Emulator** at this stage.
+
+```powershell
+$PDCNameFull = (Get-ADDomain).PDCEmulator
+$PDCName     = $PDCNameFull -split '\.' | Select-Object -First 1
+
+Invoke-Command -ComputerName $PDCName {
+    Start-Service -Name 'DFS Replication' -Verbose
+}
+```
+
+---
+
+## 🟡 Step 8 — Event ID 4114
+
+> 📋 **No script required.** Open **Event Viewer → DFS Replication** on the PDC.
+>
+> ✅ You should see **Event ID 4114** — confirming SysVol replication is no longer being replicated (expected at this stage).
+
+---
+
+## 🔵 Step 9 — Set `msDFSR-Enabled = TRUE` on PDC
+
+> Re-enable DFSR on the PDC Emulator to trigger the **authoritative (D4) restore**.
+
+```powershell
+$PDCNameFull = (Get-ADDomain).PDCEmulator
+$PDCName     = $PDCNameFull -split '\.' | Select-Object -First 1
+$domain      = (Get-ADDomain).DistinguishedName
+$dn          = "CN=SYSVOL Subscription,CN=Domain System Volume,CN=DFSR-LocalSettings,CN=$PDCName,OU=Domain Controllers,$domain"
+
+Set-ADObject -Identity $dn -Replace @{
+    "msDFSR-Enabled" = $True
+} -Verbose
+```
+
+---
+
+## 🔵 Step 10 — Force AD Replication Again
+
+> Sync the updated attributes across the domain once more.
+
+```powershell
+repadmin /syncall /A /e /P /d /q
+```
+
+---
+
+## 🔵 Step 11 — Run `DFSRDIAG POLLAD` on PDC
+
+> Force the PDC to poll Active Directory and apply the new DFSR configuration.
+
+```powershell
+DFSRDIAG POLLAD
+```
+
+---
+
+## 🟡 Step 12 — Event ID 4602
+
+> 📋 **No script required.** Open **Event Viewer → DFS Replication** on the PDC.
+>
+> ✅ You should see **Event ID 4602** — confirming SysVol replication has been **initialized**. The PDC has completed the **D4 authoritative restore**.
+
+---
+
+## 🔵 Step 13 — Start DFSR on All Non-Authoritative DCs
+
+> Start the DFS Replication service on **all remaining domain controllers**.
+
+```powershell
+$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name
+
+$DCs | ForEach-Object -Process {
+    Invoke-Command -ComputerName $PSItem {
+        Start-Service -Name 'DFS Replication' -Verbose
+    }
+}
+```
+
+> 📋 After starting, check **Event Viewer → DFS Replication** on each DC for **Event ID 4114** (expected).
+
+---
+
+## 🔵 Step 14 — Set `msDFSR-Enabled = TRUE` on All Other DCs
+
+> Re-enable DFSR replication on all **non-authoritative domain controllers**.
+
+```powershell
+$domain = (Get-ADDomain).DistinguishedName
+$DCs    = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name
+
+foreach ($DC in $DCs) {
+    $dn = "CN=SYSVOL Subscription,CN=Domain System Volume,CN=DFSR-LocalSettings,CN=$DC,OU=Domain Controllers,$domain"
+    Set-ADObject -Identity $dn -Replace @{
+        "msDFSR-Enabled" = $True
+    } -Verbose
+}
+```
+
+---
+
+## 🔵 Step 15 — Run `DFSRDIAG POLLAD` on All Non-Auth DCs
+
+> Force all non-authoritative DCs to poll AD and pull SysVol content from the PDC.
+
+```powershell
+$servers     = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name
+$PDCNameFull = (Get-ADDomain).PDCEmulator
+$PDCName     = $PDCNameFull -split '\.' | Select-Object -First 1
+
+# Exclude PDC from the list
+$servers = $servers | Where-Object { $_ -ne $PDCName }
+
 $servers | ForEach-Object -Process {
     Invoke-Command -ComputerName $PSItem { DFSRDIAG POLLAD -Verbose }
 }
 ```
 
-#### 🌀 16. Return the DFSR service to its original Startup Type (Automatic) on all DCs. 
-```powershell
-$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name 
-# Change Service startup type Autometic
+---
 
-$DCs | Foreach-Object -Process { 
-    Invoke-Command -ComputerName $PSItem { Set-Service -Name 'DFSR' -StartupType Automatic -Verbose
-    } 
-} 
+## 🔵 Step 16 — Restore DFSR Startup Type to Automatic
+
+> Return the DFSR service to **Automatic** startup on all domain controllers.
+
+```powershell
+$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name
+
+$DCs | ForEach-Object -Process {
+    Invoke-Command -ComputerName $PSItem {
+        Set-Service -Name 'DFSR' -StartupType Automatic -Verbose
+    }
+}
 ```
-#### 🌀 17. Verify DFSR Service Status from all Domain Controllers
-```powershell
-# Get the DFSR Service Status
-$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name 
 
-$GetoBj = foreach ($DC in $DCs) { 
+---
+
+## 🔵 Step 17 — Verify Final DFSR Service Status
+
+> Confirm DFSR is **Running** and set to **Automatic** on all DCs.
+
+```powershell
+$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name
+
+$GetoBj = foreach ($DC in $DCs) {
     try {
-        $result = Invoke-Command -ComputerName $DC -ScriptBlock {
-            [PSCustomObject]@{ 
+        Invoke-Command -ComputerName $DC -ScriptBlock {
+            [PSCustomObject]@{
                 DomainController = $env:COMPUTERNAME.ToUpper()
                 ServiceName      = (Get-Service -Name DFSR -ErrorAction Stop).Name
                 Status           = (Get-Service -Name DFSR -ErrorAction Stop).Status
                 StartType        = (Get-Service -Name DFSR -ErrorAction Stop).StartType
             }
         }
-    }
-    catch {
-        $result = [PSCustomObject]@{
+    } catch {
+        [PSCustomObject]@{
             DomainController = $DC.ToUpper()
             ServiceName      = "DFSR"
             Status           = "Error: $($Error[0].Exception.Message)"
             StartType        = "Unknown"
         }
     }
-    
-    $result
 }
-
 $GetoBj | Select-Object -Property DomainController, ServiceName, Status, StartType
 ```
 
-#### 🌀 18. SysVol Health Checkups for all the Domain Controllers across the domain
+---
+
+## 🟢 Step 18 — SysVol Health Check *(Post-Validation)*
+
 ```diff
-+ SysVol Health Checkups for all the Domain Controllers across the domain, Expected "State" values are '4' after sometime.
++ Expected "State" value on all DCs is 4 (Normal) after replication completes.
 ```
+
+| State Value | Meaning |
+|---|---|
+| `0` | Uninitialized |
+| `1` | Initialized |
+| `2` | Initial Sync |
+| `3` | Auto Recovery |
+| ✅ `4` | **Normal** ← Expected |
+| `5` | In Error |
+
 ```powershell
-<#
-State values are:
-0: Uninitialized
-1: Initialized
-2: Initial Sync
-3: Auto Recovery
-4: Normal
-5: In Error
-Expected value is '4'.
-#>
-$servers = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name 
+$servers = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name
 
 foreach ($server in $servers) {
     try {
-        $result = Get-WmiObject -Namespace "root\microsoftdfs" -Class "dfsrreplicatedfolderinfo" -ComputerName $server -Filter "replicatedfoldername='SYSVOL share'" | 
-        Select-Object @{Name = 'DomainController'; Expression = { $_.MemberName } }, ReplicationGroupName, ReplicatedFolderName, State
+        $result = Get-WmiObject -Namespace "root\microsoftdfs" -Class "dfsrreplicatedfolderinfo" `
+            -ComputerName $server -Filter "replicatedfoldername='SYSVOL share'" |
+            Select-Object @{Name = 'DomainController'; Expression = { $_.MemberName } },
+                          ReplicationGroupName, ReplicatedFolderName, State
         if ($result) {
-            $result # | Format-Table -AutoSize
+            $result
+        } else {
+            Write-Warning "No DFSR info found on $server for 'SYSVOL share'."
         }
-        else {
-            Write-Warning "No DFSR information found on $server for 'SYSVOL share'." 
-        }
-    }
-    catch {
+    } catch {
         Write-Warning "Error querying $server : $_"
     }
 }
-
 ```
-#### 🌀 19. Verify msDFSR-Enabled for msDFSR-options attribute values from all Domain Controllers (Optional)
+
+---
+
+## 🟢 Step 19 — Verify ADSIEDIT Attribute Values *(Optional)*
+
 ```diff
-+ msDFSR-options value will be "0" from "1" automatically into PDC after some time.
++ msDFSR-options will revert automatically from "1" back to "0" on the PDC after some time.
 ```
+
 ```powershell
-# msDFSR-options value will be "0" from "1" automatically into PDC after some time.
-$domain = (Get-ADDomain).DistinguishedName 
+$domain = (Get-ADDomain).DistinguishedName
+$DCs    = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name
 
-$DCs = Get-ADGroupMember -Identity "Domain Controllers" | Select-Object -ExpandProperty Name 
-
-$Objs = Foreach ($DC in $DCs){
-    Get-ADObject -Filter {Name -eq "SYSVOL Subscription"} -SearchBase "CN=Domain System Volume,CN=DFSR-LocalSettings,CN=$DC,OU=Domain Controllers,$domain" -Properties DistinguishedName, msDFSR-Enabled, msDFSR-options | 
-    Select-Object DistinguishedName, msDFSR-Enabled, msDFSR-options
+$Objs = Foreach ($DC in $DCs) {
+    Get-ADObject -Filter { Name -eq "SYSVOL Subscription" } `
+        -SearchBase "CN=Domain System Volume,CN=DFSR-LocalSettings,CN=$DC,OU=Domain Controllers,$domain" `
+        -Properties DistinguishedName, msDFSR-Enabled, msDFSR-options |
+        Select-Object DistinguishedName, msDFSR-Enabled, msDFSR-options
 }
 
-foreach ($Obj in $Objs){
+foreach ($Obj in $Objs) {
     $msDFSR_options = $Obj.'msDFSR-options'
-    if ([string]::IsNullOrWhiteSpace($msDFSR_options)) {
-        $msDFSR_options = "<not set>"
-    }
+    if ([string]::IsNullOrWhiteSpace($msDFSR_options)) { $msDFSR_options = "<not set>" }
 
-    [PSCustomObject]@{ 
-        DomainController = ($($Obj.DistinguishedName) -split ",")[3].Substring(3)
-        "msDFSR-Enabled" = $($Obj.'msDFSR-Enabled')
+    [PSCustomObject]@{
+        DomainController = ($Obj.DistinguishedName -split ",")[3].Substring(3)
+        "msDFSR-Enabled" = $Obj.'msDFSR-Enabled'
         "msDFSR-options" = $msDFSR_options
-    } 
+    }
 }
 ```
-___________________________________________________________________________________________________________________
 
+---
 
-𝘉𝘪𝘴𝘸𝘢𝘫𝘪𝘵 𝘉𝘪𝘴𝘸𝘢𝘴 𝘢.𝘬.𝘢 𝘣𝘴𝘩𝘸𝘫𝘵</br>
-𝘌𝘮𝘢𝘪𝘭: 𝘣𝘴𝘩𝘸𝘫𝘵@𝘨𝘮𝘢𝘪𝘭.𝘤𝘰𝘮</br>
-[𝘓𝘪𝘯𝘬𝘦𝘥𝘐𝘯](https://www.linkedin.com/in/bshwjt/)</br>
-💦 💦 💦
-___________________________________________________________________________________________________________________
+<div align="center">
+
+## 🔁 Process Flow at a Glance
+
+```
+Stop DFSR (All DCs)
+       ↓
+Set PDC → msDFSR-Enabled=FALSE, msDFSR-options=1
+       ↓
+Set All Other DCs → msDFSR-Enabled=FALSE
+       ↓
+Force AD Replication
+       ↓
+Start DFSR on PDC → [Event ID 4114]
+       ↓
+Set PDC → msDFSR-Enabled=TRUE
+       ↓
+Force AD Replication
+       ↓
+DFSRDIAG POLLAD on PDC → [Event ID 4602 — D4 Complete ✅]
+       ↓
+Start DFSR on All Other DCs → [Event ID 4114 on each]
+       ↓
+Set All Other DCs → msDFSR-Enabled=TRUE
+       ↓
+DFSRDIAG POLLAD on All Non-Auth DCs
+       ↓
+Restore DFSR to Automatic (All DCs)
+       ↓
+Post-Validation: SysVol State = 4 ✅
+```
+
+---
+
+## 👤 Author
+
+**Biswajit Biswas** *(a.k.a. bshwjt)*
+
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-bshwjt-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/bshwjt/)
+[![Email](https://img.shields.io/badge/Email-bshwjt%40gmail.com-D14836?style=for-the-badge&logo=gmail&logoColor=white)](mailto:bshwjt@gmail.com)
+[![GitHub](https://img.shields.io/badge/GitHub-21bshwjt-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/21bshwjt)
+
+---
+
+*📌 All scripts are provided as-is. Always test in a non-production environment first.*
+
+[![Maintained](https://img.shields.io/badge/Maintained-Yes-brightgreen?style=flat-square)](https://github.com/21bshwjt)
+[![PowerShell](https://img.shields.io/badge/Built%20with-PowerShell-5391FE?style=flat-square&logo=powershell)](https://learn.microsoft.com/en-us/powershell/)
+
+</div>
